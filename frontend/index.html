@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="DeployDoctor turns raw DevOps failure logs into a structured incident diagnosis: root cause, evidence, fix, and prevention.">
+  <title>DeployDoctor — AI-Powered Deployment Troubleshooter</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🩺%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#analyzer">Skip to analyzer</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">&gt;_</span>
+        <div class="brand-text">
+          <span class="brand-name">DeployDoctor</span>
+          <span class="brand-sub">AI-Powered Deployment Troubleshooter</span>
+        </div>
+      </div>
+      <a class="header-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <p class="eyebrow">Find the failure. Understand the cause. Fix the deployment.</p>
+      <h1>Turn confusing logs into clear fixes.</h1>
+      <p class="hero-sub">
+        Paste a failing deployment or application log. DeployDoctor returns a structured
+        diagnosis: the symptom, the root cause, the evidence, the fix, and how to prevent it.
+      </p>
+    </section>
+
+    <!-- INPUT -->
+    <section class="card" id="analyzer" aria-labelledby="analyzer-title">
+      <div class="card-head">
+        <h2 id="analyzer-title">Analyze a failure</h2>
+      </div>
+
+      <label class="field-label" for="log-input">Deployment or application log</label>
+      <textarea
+        id="log-input"
+        rows="12"
+        spellcheck="false"
+        autocomplete="off"
+        autocapitalize="off"
+        placeholder="Paste your log here, or upload a .log / .txt file…"></textarea>
+
+      <div class="input-meta">
+        <span id="char-count" class="muted">0 / 50,000</span>
+        <button type="button" id="clear-btn" class="btn btn-link">Clear</button>
+      </div>
+
+      <!-- Filled in Phase 12 -->
+      <div id="samples" class="samples" hidden>
+        <span class="samples-label">Try a sample log:</span>
+        <div id="sample-buttons" class="sample-buttons"></div>
+      </div>
+
+      <div class="controls">
+        <input type="file" id="file-input" accept=".log,.txt,.out" hidden>
+        <button type="button" id="upload-btn" class="btn btn-secondary">Upload log</button>
+
+        <div class="control-grow">
+          <label class="sr-only" for="category">Failure category</label>
+          <select id="category">
+            <option value="Unknown">Not sure (auto-detect)</option>
+            <option value="Docker">Docker</option>
+            <option value="Kubernetes">Kubernetes</option>
+            <option value="CI/CD">CI/CD</option>
+            <option value="Linux">Linux</option>
+            <option value="AWS">AWS</option>
+            <option value="Terraform">Terraform</option>
+            <option value="Application">Application</option>
+            <option value="Database">Database</option>
+            <option value="Networking">Networking</option>
+          </select>
+        </div>
+
+        <button type="button" id="analyze-btn" class="btn btn-primary">Analyze Failure</button>
+      </div>
+
+      <p id="form-message" class="form-message" role="alert" hidden></p>
+    </section>
+
+    <!-- RESULT -->
+    <section class="results" id="results" aria-labelledby="results-title">
+      <h2 id="results-title" class="section-title">Diagnosis</h2>
+
+      <div id="panel-empty" class="state-box">
+        <div class="state-icon" aria-hidden="true">&gt;_</div>
+        <h3>No analysis yet</h3>
+        <p class="muted">Paste a log above and choose a category, then click <strong>Analyze Failure</strong>.</p>
+      </div>
+
+      <div id="panel-loading" class="state-box" role="status" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <h3>Analyzing your log…</h3>
+        <p class="muted">Reading the log, finding the root cause, and building a fix. This usually takes a few seconds.</p>
+      </div>
+
+      <div id="panel-error" class="state-box state-error" role="alert" hidden>
+        <div class="state-icon" aria-hidden="true">!</div>
+        <h3>Analysis failed</h3>
+        <p id="error-message" class="muted"></p>
+        <button type="button" id="error-retry" class="btn btn-secondary">Back to the log</button>
+      </div>
+
+      <div id="result" tabindex="-1" hidden></div>
+    </section>
+
+    <!-- HISTORY -->
+    <section class="history" aria-labelledby="history-title">
+      <div class="section-head">
+        <h2 id="history-title" class="section-title">History</h2>
+        <span id="history-count" class="muted"></span>
+      </div>
+
+      <div id="history-empty" class="state-box compact">
+        <p class="muted">Your previous analyses will appear here.</p>
+      </div>
+      <ul id="history-list" class="history-list" hidden></ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Commands are suggestions only. DeployDoctor never executes anything.
+        AI can be wrong, so review every fix before applying it.
+      </p>
+      <p>Logs are sent to an AI provider for analysis. Avoid pasting passwords, keys, or personal data.</p>
+    </div>
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
