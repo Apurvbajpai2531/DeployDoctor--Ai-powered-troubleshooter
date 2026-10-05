@@ -271,3 +271,6 @@ select { height: 44px; padding: 0 12px; font-size: 15px; }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 2.5s; }
 }
+
+/* ---------- History: show more ---------- */
+.history-more { width: 100%; margin-top: 12px; }
