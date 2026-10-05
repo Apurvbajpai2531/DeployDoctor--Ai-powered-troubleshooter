@@ -89,3 +89,15 @@ class UploadResponse(BaseModel):
     size_bytes: int
     characters: int
     text: str
+
+
+class AnalyzeResponse(AnalysisOut):
+    """Returned by POST /api/analyze."""
+
+    degraded: bool = Field(
+        default=False,
+        description=(
+            "True when the AI answer could not be validated and a low-confidence "
+            "fallback result was returned instead."
+        ),
+    )
