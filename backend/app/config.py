@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 1048576
     rate_limit: str = "10/minute"
     cors_origins: str = "http://localhost:8000"
+    upload_rate_limit: str = "30/minute"
+    max_request_bytes: int = 2097152  # 2 MB; keep equal to nginx client_max_body_size
+    # Reverse proxies in front of the app that append to X-Forwarded-For
+    trusted_proxy_hops: int = 0
 
     @property
     def is_production(self) -> bool:

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import Analysis
 from app.schemas.analysis import FailureCategory
 from app.services import analyzer
+from app.utils.sanitize import redact_secrets
 
 logger = logging.getLogger("deploydoctor.analysis")
 
@@ -46,18 +47,28 @@ def delete_analysis(db: Session, session_id: str, analysis_id: int) -> bool:
 
 def create_analysis(
     db: Session, session_id: str, log_text: str, category: FailureCategory
-) -> tuple[Analysis, bool]:
-    """Run the AI analysis, then save it. Returns (row, degraded).
+) -> tuple[Analysis, bool, int]:
+    """Redact secrets, analyze, save. Returns (row, degraded, redaction_count).
 
-    The AI call happens BEFORE any database query, so no DB connection is held
-    while waiting for Groq.
+    Redaction happens FIRST, so neither Groq nor the database ever sees the secrets
+    we recognize. The AI call happens BEFORE any database query, so no DB connection
+    is held while waiting for Groq.
     """
-    outcome = analyzer.analyze_log(log_text, category)
+    redaction = redact_secrets(log_text)
+    if redaction.count:
+        logger.info(
+            "Redacted %s sensitive value(s) before analysis | types=%s",
+            redaction.count,
+            redaction.by_type,
+        )
+    safe_log = redaction.text
+
+    outcome = analyzer.analyze_log(safe_log, category)
     r = outcome.result
 
     row = Analysis(
         session_id=session_id,
-        log_input=log_text,
+        log_input=safe_log,
         category=category.value,
         summary=r.summary,
         severity=r.severity.value,
@@ -85,4 +96,4 @@ def create_analysis(
         outcome.attempts,
         outcome.degraded,
     )
-    return row, outcome.degraded
+    return row, outcome.degraded, redaction.count

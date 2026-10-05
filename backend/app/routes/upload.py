@@ -1,10 +1,11 @@
 import logging
 from pathlib import PurePath
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app.config import get_settings
 from app.schemas.analysis import UploadResponse
+from app.utils.ratelimit import limiter
 
 logger = logging.getLogger("deploydoctor.upload")
 
@@ -26,7 +27,10 @@ ALLOWED_EXTENSIONS = {".log", ".txt", ".out"}
         413: {"description": "File or log text too large"},
     },
 )
-async def upload_log(file: UploadFile = File(...)) -> UploadResponse:
+@limiter.limit(get_settings().upload_rate_limit)
+async def upload_log(
+    request: Request, file: UploadFile = File(...)
+) -> UploadResponse:
     settings = get_settings()
 
     # Never use the client's path; keep only the base name for display

@@ -6,12 +6,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 
 from app.config import APP_NAME, APP_VERSION, PROJECT_ROOT, get_settings
 from app.logging_config import setup_logging
 from app.routes import analysis, health, upload
 from app.services.ai_service import AIServiceError
+from app.utils.ratelimit import limiter
 
 settings = get_settings()
 setup_logging(settings.log_level, json_logs=settings.is_production)
@@ -43,6 +46,9 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+
+
+app.state.limiter = limiter
 
 
 @app.middleware("http")
@@ -86,6 +92,66 @@ async def request_context(request: Request, call_next):
     return response
 
 
+DOCS_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+
+# The frontend uses no inline scripts or styles, so a strict policy works.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    # Reject oversized bodies up front using Content-Length. In production nginx
+    # enforces the same cap (.platform/nginx/conf.d/uploads.conf).
+    if request.method in {"POST", "PUT", "PATCH"}:
+        length = request.headers.get("content-length")
+        if length is not None:
+            try:
+                too_big = int(length) > settings.max_request_bytes
+            except ValueError:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length header."}
+                )
+            if too_big:
+                logger.warning(
+                    "Rejected oversized request: %s %s (%s bytes)",
+                    request.method,
+                    request.url.path,
+                    length,
+                )
+                return JSONResponse(
+                    status_code=413, content={"detail": "Request body too large."}
+                )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    headers = response.headers
+    headers["X-Content-Type-Options"] = "nosniff"
+    headers["X-Frame-Options"] = "DENY"
+    headers["Referrer-Policy"] = "no-referrer"
+    headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    path = request.url.path
+    if path not in DOCS_PATHS:  # Swagger UI needs a CDN and inline scripts
+        headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+    if path.startswith("/api/"):
+        headers["Cache-Control"] = "no-store"  # per-session data must not be cached
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -107,6 +173,31 @@ async def ai_error_handler(request: Request, exc: AIServiceError):
         status_code=exc.http_status,
         content={"detail": exc.user_message},
         headers=headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # Report where and why only. Never echo the submitted input back: it can be a
+    # huge log and may contain secrets.
+    errors = [
+        {
+            "loc": [str(part) for part in err.get("loc", ())],
+            "msg": err.get("msg", "Invalid input"),
+            "type": err.get("type", ""),
+        }
+        for err in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    logger.warning("Rate limit exceeded on %s", request.url.path)
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please wait a minute and try again."},
+        headers={"Retry-After": "60"},
     )
 
 

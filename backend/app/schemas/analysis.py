@@ -4,6 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import get_settings
+from app.utils.sanitize import sanitize_log_text
 
 
 class FailureCategory(str, Enum):
@@ -41,7 +42,7 @@ class AnalyzeRequest(BaseModel):
     @field_validator("log_text")
     @classmethod
     def validate_log_text(cls, value: str) -> str:
-        value = value.strip()
+        value = sanitize_log_text(value)
         if not value:
             raise ValueError("Log text must not be empty")
         limit = get_settings().max_log_chars
@@ -99,5 +100,14 @@ class AnalyzeResponse(AnalysisOut):
         description=(
             "True when the AI answer could not be validated and a low-confidence "
             "fallback result was returned instead."
+        ),
+    )
+
+    redactions: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many sensitive values (keys, tokens, passwords) were masked in the "
+            "log before it was analyzed and saved."
         ),
     )

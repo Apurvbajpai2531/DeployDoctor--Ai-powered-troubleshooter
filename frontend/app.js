@@ -51,7 +51,7 @@ async function copyText(text) {
   const ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
-  ta.style.cssText = "position:fixed;opacity:0;top:0;left:0;";
+  Object.assign(ta.style, { position: "fixed", opacity: "0", top: "0", left: "0" });
   document.body.append(ta);
   ta.select();
   let ok = false;
@@ -149,6 +149,13 @@ function renderResult(a) {
         text: "The AI answer could not be validated, so this is a low-confidence fallback. It is not a diagnosis. Try again with a shorter, more focused log." })
     : null;
 
+  const redacted = a.redactions > 0
+    ? el("div", {
+        className: "banner banner-info", role: "status",
+        text: `${a.redactions} sensitive value${a.redactions === 1 ? "" : "s"} (keys, tokens, or passwords) ${a.redactions === 1 ? "was" : "were"} masked before analysis and saving.`,
+      })
+    : null;
+
   const evidence = !a.evidence || a.evidence.length === 0
     ? el("p", { className: "muted", text: "No verifiable evidence lines were found in the log." })
     : a.evidence.map((line) => el("pre", { className: "evidence-line" }, [el("code", { text: line })]));
@@ -168,6 +175,7 @@ function renderResult(a) {
   const sections = [
     header,
     degraded,
+    redacted,
     stepCard("01", "Symptom", "What is failing", el("p", { text: a.summary })),
     stepCard("02", "Root cause", "Why it is failing", el("p", { text: a.root_cause })),
     stepCard("03", "Evidence", "Lines from your log that support the diagnosis", evidence),
