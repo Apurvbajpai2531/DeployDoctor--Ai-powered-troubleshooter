@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import APP_NAME, APP_VERSION, PROJECT_ROOT, get_settings
 from app.logging_config import setup_logging
-from app.routes import health
+from app.routes import analysis, health, upload
 
 settings = get_settings()
 setup_logging(settings.log_level, json_logs=settings.is_production)
@@ -95,6 +95,8 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(analysis.router)
+app.include_router(upload.router)
 
 # Serve the frontend (added in Phase 9). Safe to run before it exists.
 if FRONTEND_DIR.is_dir():
