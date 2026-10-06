@@ -3,6 +3,7 @@ from collections.abc import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
 
@@ -13,6 +14,18 @@ class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
 
+def _engine_options(url: str) -> dict:
+    if url.startswith("sqlite"):
+        # Automated tests only: one shared in-memory connection
+        return {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+    return {
+        "pool_pre_ping": True,  # drop dead connections instead of failing requests
+        "pool_size": 5,
+        "max_overflow": 5,
+        "connect_args": {"connect_timeout": 5},
+    }
+
+
 def _build_engine():
     url = get_settings().effective_database_url
     if not url:
@@ -20,13 +33,7 @@ def _build_engine():
             "No database configured. Set DATABASE_URL (development) "
             "or attach RDS on Elastic Beanstalk (RDS_* variables)."
         )
-    return create_engine(
-        url,
-        pool_pre_ping=True,  # drop dead connections instead of failing requests
-        pool_size=5,
-        max_overflow=5,
-        connect_args={"connect_timeout": 5},
-    )
+    return create_engine(url, **_engine_options(url))
 
 
 engine = _build_engine()
