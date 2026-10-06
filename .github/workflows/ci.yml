@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Lint and secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check backend
+
+      - name: Look for committed secrets
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::A .env file is tracked by Git"
+            exit 1
+          fi
+          if git grep -nE "gsk_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY" -- . ':!backend/tests'; then
+            echo "::error::A value that looks like a secret is committed"
+            exit 1
+          fi
+          echo "No secret-looking values found"
+
+  test:
+    name: Tests (SQLite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Pytest
+        working-directory: backend
+        run: pytest --cov=app --cov-report=term-missing
+
+  test-postgres:
+    name: Tests and migrations (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: deploy
+          POSTGRES_PASSWORD: deploy
+          POSTGRES_DB: deploydoctor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U deploy -d deploydoctor_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://deploy:deploy@localhost:5432/deploydoctor_test
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Migrations go up, down, and up again
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://deploy:deploy@localhost:5432/deploydoctor_test
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          alembic downgrade base
+
+      - name: Pytest
+        working-directory: backend
+        run: pytest
+
+  docker:
+    name: Docker build and smoke test
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build -t deploydoctor:ci .
+
+      - name: Start the app with a real PostgreSQL and check it
+        run: |
+          set -euo pipefail
+          docker network create ddnet
+
+          docker run -d --name db --network ddnet \
+            -e POSTGRES_USER=deploy -e POSTGRES_PASSWORD=deploy -e POSTGRES_DB=deploydoctor \
+            postgres:16-alpine
+
+          for _ in $(seq 1 30); do
+            if docker exec db pg_isready -U deploy -d deploydoctor; then break; fi
+            sleep 2
+          done
+
+          docker run -d --name app --network ddnet -p 8000:8000 \
+            -e ENVIRONMENT=production \
+            -e DATABASE_URL=postgresql://deploy:deploy@db:5432/deploydoctor \
+            -e CORS_ORIGINS=http://localhost:8000 \
+            deploydoctor:ci
+
+          for _ in $(seq 1 40); do
+            if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
+          body=$(curl -fsS http://localhost:8000/health)
+          echo "$body"
+          case "$body" in
+            *'"database":"ok"'*) echo "health check: database ok" ;;
+            *) echo "::error::health check did not report a healthy database"; exit 1 ;;
+          esac
+
+          curl -fsS -o /dev/null http://localhost:8000/
+          curl -fsS -o /dev/null http://localhost:8000/static/app.js
+          test "$(docker exec app id -u)" = "10001"
+          echo "smoke test passed"
+
+      - name: Show container logs
+        if: failure()
+        run: |
+          echo "----- app -----";  docker logs app || true
+          echo "----- db -----";   docker logs db || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f app db || true
