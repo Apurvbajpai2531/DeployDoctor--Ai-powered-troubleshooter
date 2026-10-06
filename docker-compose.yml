@@ -1,3 +1,11 @@
+name: deploydoctor
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
@@ -8,6 +16,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deploy}
       POSTGRES_DB: ${POSTGRES_DB:-deploydoctor}
     ports:
+      # Host access for local tools only (psql, a host-run uvicorn). The app uses db:5432.
       - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -16,6 +25,38 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
+
+  app:
+    build: .
+    image: deploydoctor:local
+    container_name: deploydoctor-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+      # Inside the Compose network the database host is the service name "db", port 5432
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deploy}:${POSTGRES_PASSWORD:-deploy}@db:5432/${POSTGRES_DB:-deploydoctor}
+      MAX_LOG_CHARS: ${MAX_LOG_CHARS:-50000}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1048576}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-2097152}
+      RATE_LIMIT: ${RATE_LIMIT:-10/minute}
+      UPLOAD_RATE_LIMIT: ${UPLOAD_RATE_LIMIT:-30/minute}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
+      TRUSTED_PROXY_HOPS: "0"
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
 
 volumes:
   pgdata:
