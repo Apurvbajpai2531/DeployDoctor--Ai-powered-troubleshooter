@@ -111,3 +111,12 @@ class AnalyzeResponse(AnalysisOut):
             "log before it was analyzed and saved."
         ),
     )
+
+    redactions: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many sensitive values (keys, tokens, passwords) were masked in the "
+            "log before it was analyzed and saved."
+        ),
+    )
