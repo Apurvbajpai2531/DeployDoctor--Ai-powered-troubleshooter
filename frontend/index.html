@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a111d">
   <meta name="description" content="DeployDoctor turns raw DevOps failure logs into a structured incident diagnosis: root cause, evidence, fix, and prevention.">
   <title>DeployDoctor — AI-Powered Deployment Troubleshooter</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🩺%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a111d'/%3E%3Cpath d='M3 17h7l3-8 5 15 3-7h8' fill='none' stroke='%234cc9f0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -14,127 +15,153 @@
 
   <header class="site-header">
     <div class="container header-inner">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">&gt;_</span>
-        <div class="brand-text">
-          <span class="brand-name">DeployDoctor</span>
-          <span class="brand-sub">AI-Powered Deployment Troubleshooter</span>
-        </div>
-      </div>
-      <a class="header-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+      <a class="brand" href="/" aria-label="DeployDoctor home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h7l3-8 5 15 3-7h8"/></svg>
+        </span>
+        <span class="brand-name">DeployDoctor</span>
+        <span class="brand-sub">AI-Powered Deployment Troubleshooter</span>
+      </a>
+      <nav class="header-actions" aria-label="Site">
+        <span id="api-status" class="status status-checking" role="status">Checking API</span>
+        <a class="header-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+      </nav>
     </div>
   </header>
 
   <main class="container">
     <section class="hero">
-      <p class="eyebrow">Find the failure. Understand the cause. Fix the deployment.</p>
       <h1>Turn confusing logs into clear fixes.</h1>
+      <p class="tagline">Find the failure. Understand the cause. Fix the deployment.</p>
       <p class="hero-sub">
-        Paste a failing deployment or application log. DeployDoctor returns a structured
-        diagnosis: the symptom, the root cause, the evidence, the fix, and how to prevent it.
+        Paste a failing deployment or application log. DeployDoctor answers with a structured
+        incident diagnosis, not a chat reply.
       </p>
+      <ol class="flow" aria-label="What a diagnosis contains">
+        <li><strong>Symptom</strong><span>what is failing</span></li>
+        <li><strong>Root cause</strong><span>why it fails</span></li>
+        <li><strong>Evidence</strong><span>lines from your log</span></li>
+        <li><strong>Fix</strong><span>steps and commands</span></li>
+        <li><strong>Prevention</strong><span>how to avoid it</span></li>
+      </ol>
     </section>
 
-    <!-- INPUT -->
-    <section class="card" id="analyzer" aria-labelledby="analyzer-title">
-      <div class="card-head">
-        <h2 id="analyzer-title">Analyze a failure</h2>
+    <div class="layout">
+      <div class="col-main">
+
+        <!-- INPUT -->
+        <section class="workbench" id="analyzer" aria-labelledby="analyzer-title">
+          <h2 id="analyzer-title" class="section-title">Analyze a failure</h2>
+
+          <div id="samples" class="samples" hidden>
+            <span class="samples-label">Start with a sample</span>
+            <div id="sample-buttons" class="sample-buttons"></div>
+          </div>
+
+          <div class="terminal">
+            <div class="terminal-bar">
+              <label class="terminal-title" for="log-input">Deployment or application log</label>
+              <span class="terminal-meta">
+                <span id="char-count" class="muted">0 / 50,000</span>
+                <button type="button" id="clear-btn" class="btn btn-link">Clear</button>
+              </span>
+            </div>
+            <textarea
+              id="log-input"
+              rows="12"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              placeholder="Paste your log here, drop a .log file, or pick a sample above."></textarea>
+          </div>
+
+          <div class="toolbar">
+            <input type="file" id="file-input" accept=".log,.txt,.out" hidden>
+            <button type="button" id="upload-btn" class="btn btn-secondary">
+              <svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>
+              Upload log
+            </button>
+
+            <div class="field">
+              <label for="category">Failure category</label>
+              <select id="category">
+                <option value="Unknown">Not sure (auto-detect)</option>
+                <option value="Docker">Docker</option>
+                <option value="Kubernetes">Kubernetes</option>
+                <option value="CI/CD">CI/CD</option>
+                <option value="Linux">Linux</option>
+                <option value="AWS">AWS</option>
+                <option value="Terraform">Terraform</option>
+                <option value="Application">Application</option>
+                <option value="Database">Database</option>
+                <option value="Networking">Networking</option>
+              </select>
+            </div>
+
+            <button type="button" id="analyze-btn" class="btn btn-primary">Analyze Failure</button>
+          </div>
+
+          <p class="hint">Press Ctrl+Enter to analyze. Common secret formats are masked on the server before analysis.</p>
+          <p id="form-message" class="form-message" role="alert" hidden></p>
+        </section>
+
+        <!-- RESULT -->
+        <section class="results" id="results" aria-labelledby="results-title">
+          <h2 id="results-title" class="section-title">Diagnosis</h2>
+
+          <div id="panel-empty" class="state-box">
+            <div class="state-icon" aria-hidden="true">
+              <svg viewBox="0 0 32 32" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h7l3-8 5 15 3-7h8"/></svg>
+            </div>
+            <h3>No diagnosis yet</h3>
+            <p class="muted">Pick a sample or paste a log, choose a category, and select <strong>Analyze Failure</strong>.</p>
+          </div>
+
+          <div id="panel-loading" class="state-box" role="status" hidden>
+            <div class="spinner" aria-hidden="true"></div>
+            <h3>Analyzing your log</h3>
+            <p class="muted">Masking secrets, reading the log, and building the diagnosis. <span id="loading-elapsed">0s</span> elapsed.</p>
+          </div>
+
+          <div id="panel-error" class="state-box state-error" role="alert" hidden>
+            <div class="state-icon" aria-hidden="true">!</div>
+            <h3>Analysis failed</h3>
+            <p id="error-message" class="muted"></p>
+            <button type="button" id="error-retry" class="btn btn-secondary">Back to the log</button>
+          </div>
+
+          <div id="result" tabindex="-1" hidden></div>
+        </section>
       </div>
 
-      <label class="field-label" for="log-input">Deployment or application log</label>
-      <textarea
-        id="log-input"
-        rows="12"
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="off"
-        placeholder="Paste your log here, or upload a .log / .txt file…"></textarea>
+      <!-- HISTORY -->
+      <aside class="col-side" aria-labelledby="history-title">
+        <section class="history">
+          <div class="section-head">
+            <h2 id="history-title" class="section-title">History</h2>
+            <span id="history-count" class="muted"></span>
+          </div>
 
-      <div class="input-meta">
-        <span id="char-count" class="muted">0 / 50,000</span>
-        <button type="button" id="clear-btn" class="btn btn-link">Clear</button>
-      </div>
-
-      <!-- Filled in Phase 12 -->
-      <div id="samples" class="samples" hidden>
-        <span class="samples-label">Try a sample log:</span>
-        <div id="sample-buttons" class="sample-buttons"></div>
-      </div>
-
-      <div class="controls">
-        <input type="file" id="file-input" accept=".log,.txt,.out" hidden>
-        <button type="button" id="upload-btn" class="btn btn-secondary">Upload log</button>
-
-        <div class="control-grow">
-          <label class="sr-only" for="category">Failure category</label>
-          <select id="category">
-            <option value="Unknown">Not sure (auto-detect)</option>
-            <option value="Docker">Docker</option>
-            <option value="Kubernetes">Kubernetes</option>
-            <option value="CI/CD">CI/CD</option>
-            <option value="Linux">Linux</option>
-            <option value="AWS">AWS</option>
-            <option value="Terraform">Terraform</option>
-            <option value="Application">Application</option>
-            <option value="Database">Database</option>
-            <option value="Networking">Networking</option>
-          </select>
-        </div>
-
-        <button type="button" id="analyze-btn" class="btn btn-primary">Analyze Failure</button>
-      </div>
-
-      <p id="form-message" class="form-message" role="alert" hidden></p>
-    </section>
-
-    <!-- RESULT -->
-    <section class="results" id="results" aria-labelledby="results-title">
-      <h2 id="results-title" class="section-title">Diagnosis</h2>
-
-      <div id="panel-empty" class="state-box">
-        <div class="state-icon" aria-hidden="true">&gt;_</div>
-        <h3>No analysis yet</h3>
-        <p class="muted">Paste a log above and choose a category, then click <strong>Analyze Failure</strong>.</p>
-      </div>
-
-      <div id="panel-loading" class="state-box" role="status" hidden>
-        <div class="spinner" aria-hidden="true"></div>
-        <h3>Analyzing your log…</h3>
-        <p class="muted">Reading the log, finding the root cause, and building a fix. This usually takes a few seconds.</p>
-      </div>
-
-      <div id="panel-error" class="state-box state-error" role="alert" hidden>
-        <div class="state-icon" aria-hidden="true">!</div>
-        <h3>Analysis failed</h3>
-        <p id="error-message" class="muted"></p>
-        <button type="button" id="error-retry" class="btn btn-secondary">Back to the log</button>
-      </div>
-
-      <div id="result" tabindex="-1" hidden></div>
-    </section>
-
-    <!-- HISTORY -->
-    <section class="history" aria-labelledby="history-title">
-      <div class="section-head">
-        <h2 id="history-title" class="section-title">History</h2>
-        <span id="history-count" class="muted"></span>
-      </div>
-
-      <div id="history-empty" class="state-box compact">
-        <p class="muted">Your previous analyses will appear here.</p>
-      </div>
-      <ul id="history-list" class="history-list" hidden></ul>
-      <button type="button" id="history-more" class="btn btn-secondary history-more" hidden>Show more</button>
-    </section>
+          <div id="history-empty" class="state-box compact">
+            <p class="muted">Your previous analyses will appear here.</p>
+          </div>
+          <ul id="history-list" class="history-list" hidden></ul>
+          <button type="button" id="history-more" class="btn btn-secondary history-more" hidden>Show more</button>
+        </section>
+      </aside>
+    </div>
   </main>
 
   <footer class="site-footer">
     <div class="container">
       <p>
-        Commands are suggestions only. DeployDoctor never executes anything.
-        AI can be wrong, so review every fix before applying it.
+        DeployDoctor <span id="app-version"></span>
+        Commands are suggestions only; nothing is ever executed. AI can be wrong, so review every fix before applying it.
       </p>
-      <p>Logs are sent to an AI provider for analysis. Common secret formats are masked automatically, but this is not guaranteed, so avoid pasting passwords, keys, or personal data.</p>
+      <p>
+        Logs are sent to an AI provider for analysis. Common secret formats are masked automatically,
+        but this is not guaranteed, so avoid pasting passwords, keys, or personal data.
+      </p>
     </div>
   </footer>
 
