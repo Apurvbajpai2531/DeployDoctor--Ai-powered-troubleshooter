@@ -1,0 +1,23 @@
+# Keep secrets, local state, and the Compose file out of the deploy bundle
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+.env*
+.aws
+*.pem
+*.key
+docker-compose.yml
+docs
+README.md
+LICENSE
+backend/tests
+.elasticbeanstalk
+.vscode
+.idea
