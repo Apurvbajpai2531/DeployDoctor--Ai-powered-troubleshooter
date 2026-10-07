@@ -34,3 +34,8 @@ Thumbs.db
 *.sqlite3
 *.log
 !frontend/samples/*.log
+
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
