@@ -3,7 +3,8 @@
 /* ============================================================
    DeployDoctor frontend
    Security rule: untrusted text (logs, AI output) is only ever
-   inserted with textContent / text nodes, never innerHTML.
+   inserted with textContent or text nodes. Markup is never built
+   from strings, so injected HTML is shown as plain text.
    ============================================================ */
 
 // Keep these in sync with MAX_LOG_CHARS / MAX_UPLOAD_BYTES in .env
@@ -12,9 +13,32 @@ const MAX_UPLOAD_BYTES = 1048576;
 const ALLOWED_EXTENSIONS = [".log", ".txt", ".out"];
 const SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
+const SEVERITY_INFO = {
+  LOW: "Minor issue. The service still works.",
+  MEDIUM: "Degraded. A workaround is likely.",
+  HIGH: "A service or deployment is failing.",
+  CRITICAL: "Outage, data-loss risk, or security exposure.",
+};
+
+const ANALYZE_TIMEOUT_MS = 90000;
+const UPLOAD_TIMEOUT_MS = 30000;
+const HISTORY_PAGE = 20;
+const HISTORY_MAX = 100; // the API caps a page at 100
+const HISTORY_EMPTY_TEXT = "Your previous analyses will appear here.";
+const SESSION_KEY = "deploydoctor_session_id";
+const SESSION_RE = /^[A-Za-z0-9-]{16,64}$/;
+
+// Mutable state
+let busy = false;
+let currentAnalysisId = null; // id of the analysis shown in the result panel
+let historyItems = [];
+let historyTotal = 0;
+let loadingTimer = null;
+let memorySessionId = null;
+
 const $ = (id) => document.getElementById(id);
 
-/* ---------- DOM helper (safe by construction) ---------- */
+/* ---------- DOM helpers (safe by construction) ---------- */
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -32,13 +56,52 @@ function el(tag, props = {}, children = []) {
   return node;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ICON_PATHS = {
+  copy: "M8 8h11v12H8z M5 16H4V4h11v1",
+  check: "M5 12l5 5 9-10",
+  trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6",
+};
+
+function icon(name) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  const attrs = {
+    viewBox: "0 0 24 24", width: "16", height: "16", fill: "none", stroke: "currentColor",
+    "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round",
+    "aria-hidden": "true", class: "icon",
+  };
+  for (const [k, v] of Object.entries(attrs)) svg.setAttribute(k, v);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", ICON_PATHS[name]);
+  svg.append(path);
+  return svg;
+}
+
+function scrollBehavior() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
 function formatTime(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
-/* ---------- Clipboard (works on http too) ---------- */
+function timeAgo(iso) {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} d ago`;
+  return new Date(t).toLocaleDateString([], { dateStyle: "medium" });
+}
+
+/* ---------- Clipboard (works on plain http too) ---------- */
 async function copyText(text) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -64,12 +127,12 @@ async function copyText(text) {
   return ok;
 }
 
-function copyButton(getText) {
-  const btn = el("button", { type: "button", className: "btn btn-secondary", text: "Copy" });
+function copyButton(getText, label = "Copy", className = "btn btn-secondary btn-small") {
+  const btn = el("button", { type: "button", className }, [icon("copy"), label]);
   btn.addEventListener("click", async () => {
     const ok = await copyText(getText());
-    btn.textContent = ok ? "Copied" : "Copy failed";
-    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+    btn.replaceChildren(icon(ok ? "check" : "copy"), ok ? "Copied" : "Copy failed");
+    setTimeout(() => btn.replaceChildren(icon("copy"), label), 1600);
   });
   return btn;
 }
@@ -86,42 +149,86 @@ function showError(message) {
   showPanel("panel-error");
 }
 
+function startLoadingTimer() {
+  const started = Date.now();
+  $("loading-elapsed").textContent = "0s";
+  clearInterval(loadingTimer);
+  loadingTimer = setInterval(() => {
+    $("loading-elapsed").textContent = `${Math.floor((Date.now() - started) / 1000)}s`;
+  }, 1000);
+}
+
+function stopLoadingTimer() {
+  clearInterval(loadingTimer);
+  loadingTimer = null;
+}
+
 /* ---------- Result rendering ---------- */
+function normalizedSeverity(severity) {
+  return SEVERITIES.includes(severity) ? severity : "MEDIUM";
+}
+
 function severityBadge(severity, small = false) {
-  const s = SEVERITIES.includes(severity) ? severity : "MEDIUM";
+  const s = normalizedSeverity(severity);
   return el("span", { className: `badge sev-${s.toLowerCase()}${small ? " small" : ""}`, text: s });
 }
 
-function confidenceMeter(confidence) {
+function confidenceRing(confidence) {
   const pct = Math.max(0, Math.min(100, Math.round((Number(confidence) || 0) * 100)));
   const level = pct >= 80 ? "high" : pct >= 50 ? "mid" : "low";
-  const fill = el("span", { className: "meter-fill" });
-  fill.style.width = `${pct}%`;
-  return el("div", { className: `confidence conf-${level}` }, [
-    el("span", { className: "meta-label", text: "Confidence" }),
-    el("div", {
-      className: "meter", role: "meter", "aria-label": "Confidence",
-      "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(pct),
-    }, [fill]),
-    el("span", { className: "confidence-value", text: `${pct}%` }),
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 64 64");
+  svg.setAttribute("class", "ring");
+  svg.setAttribute("aria-hidden", "true");
+
+  const ringCircle = (cls, dash) => {
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("cx", "32");
+    c.setAttribute("cy", "32");
+    c.setAttribute("r", String(radius));
+    c.setAttribute("fill", "none");
+    c.setAttribute("stroke-width", "6");
+    c.setAttribute("class", cls);
+    if (dash) {
+      c.setAttribute("stroke-dasharray", dash);
+      c.setAttribute("stroke-linecap", "round");
+      c.setAttribute("transform", "rotate(-90 32 32)");
+    }
+    return c;
+  };
+  svg.append(ringCircle("ring-track"), ringCircle("ring-value", `${(pct / 100) * circumference} ${circumference}`));
+
+  return el("div", {
+    className: `confidence conf-${level}`, role: "meter", "aria-label": "Confidence",
+    "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(pct),
+  }, [
+    svg,
+    el("div", { className: "confidence-text" }, [
+      el("span", { className: "confidence-value", text: `${pct}%` }),
+      el("span", { className: "confidence-label", text: "confidence" }),
+    ]),
   ]);
 }
 
 function metaItem(label, value) {
-  return el("div", {}, [
-    el("span", { className: "meta-label", text: label }),
-    el("span", { className: "meta-value", text: value }),
-  ]);
+  return el("div", {}, [el("dt", { text: label }), el("dd", { text: value })]);
 }
 
-function stepCard(num, title, hint, body, extraClass = "") {
-  return el("article", { className: `step ${extraClass}`.trim() }, [
-    el("header", { className: "step-head" }, [
-      el("span", { className: "step-num", text: num }),
-      el("h3", { className: "step-title", text: title }),
-      el("span", { className: "step-hint", text: hint }),
+function stage(number, title, hint, body) {
+  return el("li", { className: "stage" }, [
+    el("div", { className: "stage-rail", "aria-hidden": "true" }, [
+      el("span", { className: "stage-node", text: String(number) }),
     ]),
-    el("div", { className: "step-body" }, body),
+    el("div", { className: "stage-content" }, [
+      el("header", { className: "stage-head" }, [
+        el("h3", { text: title }),
+        el("span", { className: "stage-hint", text: hint }),
+      ]),
+      el("div", { className: "stage-body" }, body),
+    ]),
   ]);
 }
 
@@ -130,23 +237,59 @@ function listOrEmpty(items, tag, className, emptyText) {
   return el(tag, { className }, items.map((t) => el("li", { text: t })));
 }
 
+function toMarkdown(a) {
+  const F = "\x60\x60\x60"; // a markdown code fence
+  const pct = Math.round((Number(a.confidence) || 0) * 100);
+  const numbered = (items) => items.map((t, i) => `${i + 1}. ${t}`).join("\n");
+  const bullets = (items) => items.map((t) => `- ${t}`).join("\n");
+
+  const out = [
+    "# DeployDoctor diagnosis", "",
+    `- Severity: ${a.severity}`,
+    `- Confidence: ${pct}%`,
+    `- Affected component: ${a.affected_component}`,
+    `- Category: ${a.category}`,
+    `- Analyzed: ${formatTime(a.created_at)}`, "",
+    "## Symptom", a.summary, "",
+    "## Root cause", a.root_cause, "",
+  ];
+  if (a.evidence && a.evidence.length) out.push("## Evidence", F, ...a.evidence, F, "");
+  out.push("## Fix", numbered(a.recommended_fix || []));
+  if (a.commands && a.commands.length) {
+    out.push("", "Commands (review before running):", "", F, ...a.commands, F);
+  }
+  out.push("", "## Prevention", bullets(a.prevention || []));
+  if (a.devops_insight) out.push("", "## DevOps insight", a.devops_insight);
+  return out.join("\n") + "\n";
+}
+
 function renderResult(a) {
   const root = $("result");
   root.replaceChildren();
+  const sev = normalizedSeverity(a.severity);
 
-  const header = el("section", { className: "result-top" }, [
-    el("div", { className: "result-top-row" }, [severityBadge(a.severity), confidenceMeter(a.confidence)]),
-    el("div", { className: "result-meta" }, [
+  const vitals = el("section", { className: `vitals vitals-${sev.toLowerCase()}`, "aria-label": "Diagnosis summary" }, [
+    el("div", {}, [
+      severityBadge(sev),
+      el("p", { className: "vitals-text", text: SEVERITY_INFO[sev] }),
+    ]),
+    confidenceRing(a.confidence),
+    el("dl", { className: "vitals-meta" }, [
       metaItem("Affected component", a.affected_component),
       metaItem("Category", a.category),
       metaItem("Analyzed", formatTime(a.created_at)),
       a.ai_model ? metaItem("Model", a.ai_model) : null,
     ]),
+    el("div", { className: "vitals-actions" }, [
+      copyButton(() => toMarkdown(a), "Copy report"),
+    ]),
   ]);
 
   const degraded = a.degraded
-    ? el("div", { className: "banner banner-warn", role: "status",
-        text: "The AI answer could not be validated, so this is a low-confidence fallback. It is not a diagnosis. Try again with a shorter, more focused log." })
+    ? el("div", {
+        className: "banner banner-warn", role: "status",
+        text: "The AI answer could not be validated, so this is a low-confidence fallback. It is not a diagnosis. Try again with a shorter, more focused log.",
+      })
     : null;
 
   const redacted = a.redactions > 0
@@ -172,27 +315,28 @@ function renderResult(a) {
       ]
     : [];
 
-  const sections = [
-    header,
-    degraded,
-    redacted,
-    stepCard("01", "Symptom", "What is failing", el("p", { text: a.summary })),
-    stepCard("02", "Root cause", "Why it is failing", el("p", { text: a.root_cause })),
-    stepCard("03", "Evidence", "Lines from your log that support the diagnosis", evidence),
-    stepCard("04", "Fix", "What to do about it", [
+  const record = el("ol", { className: "record" }, [
+    stage(1, "Symptom", "What is failing", el("p", { text: a.summary })),
+    stage(2, "Root cause", "Why it is failing", el("p", { text: a.root_cause })),
+    stage(3, "Evidence", "Lines from your log that support the diagnosis", evidence),
+    stage(4, "Fix", "What to do about it", [
       listOrEmpty(a.recommended_fix, "ol", "steps", "No fix steps were returned."),
       ...commands,
     ]),
-    stepCard("05", "Prevention", "How to stop it happening again",
+    stage(5, "Prevention", "How to stop it happening again",
       listOrEmpty(a.prevention, "ul", "bullets", "No prevention advice was returned.")),
-    a.devops_insight
-      ? stepCard("★", "DevOps Insight", "The bigger picture", el("p", { text: a.devops_insight }), "step-insight")
-      : null,
-  ];
-  root.append(...sections.filter(Boolean));
+  ]);
 
+  const insight = a.devops_insight
+    ? el("aside", { className: "insight" }, [
+        el("h3", { text: "DevOps Insight" }),
+        el("p", { text: a.devops_insight }),
+      ])
+    : null;
+
+  root.append(vitals, degraded, redacted, record, insight);
   showPanel("result");
-  root.scrollIntoView({ behavior: "smooth", block: "start" });
+  root.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
   root.focus({ preventScroll: true });
 }
 
@@ -213,21 +357,26 @@ function renderHistory(items, handlers = {}) {
     const open = el("button", {
       type: "button", className: "history-open",
       "aria-label": `Open analysis from ${formatTime(item.created_at)}`,
+      "aria-current": item.id === currentAnalysisId ? "true" : null,
       onclick: () => handlers.onOpen && handlers.onOpen(item.id),
     }, [
-      severityBadge(item.severity, true),
-      el("span", { className: "history-main" }, [
-        el("span", { className: "history-summary", text: item.summary }),
-        el("span", { className: "history-meta", text: `${item.category} · ${confidence} · ${formatTime(item.created_at)}` }),
+      el("span", { className: "history-top" }, [
+        severityBadge(item.severity, true),
+        el("span", { className: "history-time", title: formatTime(item.created_at), text: timeAgo(item.created_at) }),
+      ]),
+      el("span", { className: "history-summary", text: item.summary }),
+      el("span", { className: "history-meta" }, [
+        el("span", { className: "tag", text: item.category }),
+        el("span", { text: `${confidence} confidence` }),
       ]),
     ]);
 
     const del = handlers.onDelete
       ? el("button", {
-          type: "button", className: "history-delete", text: "✕",
+          type: "button", className: "history-delete",
           "aria-label": `Delete analysis from ${formatTime(item.created_at)}`,
           onclick: () => handlers.onDelete(item.id),
-        })
+        }, [icon("trash")])
       : null;
 
     list.append(el("li", { className: "history-item" }, [open, del]));
@@ -239,6 +388,7 @@ function setMessage(text, kind = "error") {
   const box = $("form-message");
   box.textContent = text;
   box.className = `form-message ${kind}`;
+  box.setAttribute("role", kind === "error" ? "alert" : "status");
   box.hidden = !text;
 }
 
@@ -259,13 +409,9 @@ function validateInput() {
 }
 
 /* ---------- Session ID (anonymous, per browser) ---------- */
-const SESSION_KEY = "deploydoctor_session_id";
-const SESSION_RE = /^[A-Za-z0-9-]{16,64}$/;
-let memorySessionId = null;
-
 function generateId() {
   if (window.crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  // crypto.randomUUID is unavailable on plain http (non-localhost): build a v4 UUID by hand
+  // randomUUID is unavailable on plain http (non-localhost): build a v4 UUID by hand
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
   b[6] = (b[6] & 0x0f) | 0x40;
@@ -282,16 +428,13 @@ function getSessionId() {
     localStorage.setItem(SESSION_KEY, fresh);
     return fresh;
   } catch (_) {
-    // localStorage blocked: keep an in-memory ID for this tab
+    // storage blocked: keep an in-memory ID for this tab
     if (!memorySessionId) memorySessionId = generateId();
     return memorySessionId;
   }
 }
 
 /* ---------- API layer ---------- */
-const ANALYZE_TIMEOUT_MS = 90000;
-const UPLOAD_TIMEOUT_MS = 30000;
-
 class ApiError extends Error {
   constructor(message, status = 0) {
     super(message);
@@ -303,7 +446,6 @@ function errorMessageFrom(status, body) {
   const detail = body && body.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail) && detail.length > 0) {
-    // FastAPI validation errors: [{ loc, msg, type }]
     return String(detail[0].msg || "Invalid input").replace(/^Value error, /, "");
   }
   if (status === 413) return "That input is too large.";
@@ -323,9 +465,7 @@ async function apiFetch(path, options = {}, timeoutMs = ANALYZE_TIMEOUT_MS) {
       signal: controller.signal,
     });
   } catch (err) {
-    if (err.name === "AbortError") {
-      throw new ApiError("The request timed out. Please try again.");
-    }
+    if (err.name === "AbortError") throw new ApiError("The request timed out. Please try again.");
     throw new ApiError("Cannot reach the server. Check your connection and try again.");
   } finally {
     clearTimeout(timer);
@@ -343,9 +483,31 @@ async function apiFetch(path, options = {}, timeoutMs = ANALYZE_TIMEOUT_MS) {
   return body;
 }
 
-/* ---------- Busy state (prevents double submits) ---------- */
-let busy = false;
+/* ---------- API status in the header ---------- */
+function setApiStatus(kind, text) {
+  const badge = $("api-status");
+  badge.className = `status status-${kind}`;
+  badge.textContent = text;
+}
 
+async function checkApiStatus() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch("/health", { cache: "no-store", signal: controller.signal });
+    const body = await res.json().catch(() => null);
+    if (res.ok && body && body.status === "ok") setApiStatus("ok", "API online");
+    else if (body && body.database === "unavailable") setApiStatus("warn", "Database unavailable");
+    else setApiStatus("warn", "API degraded");
+    if (body && body.version) $("app-version").textContent = `v${body.version}`;
+  } catch (_) {
+    setApiStatus("down", "API unreachable");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ---------- Busy state (prevents double submits) ---------- */
 function setBusy(value, analyzing = false) {
   busy = value;
   $("analyze-btn").disabled = value;
@@ -353,7 +515,7 @@ function setBusy(value, analyzing = false) {
   $("analyze-btn").textContent = value && analyzing ? "Analyzing…" : "Analyze Failure";
 }
 
-/* ---------- Upload (server validates; client checks are for fast feedback) ---------- */
+/* ---------- Upload (the server validates; client checks are for fast feedback) ---------- */
 async function loadFile(file) {
   const name = file.name || "";
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".")).toLowerCase() : "";
@@ -387,7 +549,8 @@ async function onAnalyzeClick() {
   setMessage("");
   setBusy(true, true);
   showPanel("panel-loading");
-  $("panel-loading").scrollIntoView({ behavior: "smooth", block: "start" });
+  startLoadingTimer();
+  $("panel-loading").scrollIntoView({ behavior: scrollBehavior(), block: "start" });
 
   try {
     const data = await apiFetch(
@@ -408,19 +571,12 @@ async function onAnalyzeClick() {
   } catch (err) {
     showError(err.message);
   } finally {
+    stopLoadingTimer();
     setBusy(false);
   }
 }
 
 /* ---------- History ---------- */
-const HISTORY_PAGE = 20;
-const HISTORY_MAX = 100; // the API caps a page at 100
-const HISTORY_EMPTY_TEXT = "Your previous analyses will appear here.";
-
-let historyItems = [];
-let historyTotal = 0;
-let currentAnalysisId = null; // id of the analysis currently shown in the result panel
-
 function showHistory() {
   renderHistory(historyItems, {
     onOpen: openAnalysis,
@@ -483,6 +639,7 @@ async function openAnalysis(id) {
     data.degraded = data.ai_model === "fallback";
     currentAnalysisId = data.id;
     renderResult(data);
+    showHistory();
   } catch (err) {
     if (err.status === 404) {
       await refreshHistory();
@@ -499,7 +656,7 @@ async function deleteAnalysisItem(id) {
   try {
     await apiFetch(`/api/analyses/${id}`, { method: "DELETE" }, UPLOAD_TIMEOUT_MS);
   } catch (err) {
-    if (err.status !== 404) { // 404 = already gone, which is the outcome we wanted
+    if (err.status !== 404) { // 404 means it is already gone, which is the outcome we wanted
       window.alert(`Could not delete: ${err.message}`);
       return;
     }
@@ -511,6 +668,64 @@ async function deleteAnalysisItem(id) {
   await refreshHistory();
 }
 
+/* ---------- Sample logs (demo mode) ---------- */
+function applySample(sample, { quiet = false } = {}) {
+  if (busy) return;
+  $("log-input").value = sample.log.trim();
+  $("log-input").scrollTop = 0;
+  $("category").value = sample.category;
+  updateCounter();
+  setMessage(`Loaded sample: ${sample.label} (category: ${sample.category}). Select Analyze Failure to run it.`, "info");
+  if (!quiet) $("analyze-btn").focus();
+}
+
+function initSamples() {
+  const samples = Array.isArray(window.SAMPLE_LOGS) ? window.SAMPLE_LOGS : [];
+  if (samples.length === 0) return; // the section stays hidden if samples.js failed to load
+
+  const holder = $("sample-buttons");
+  for (const sample of samples) {
+    holder.append(el("button", {
+      type: "button",
+      className: "chip",
+      text: sample.label,
+      title: `${sample.category} sample log`,
+      onclick: () => applySample(sample),
+    }));
+  }
+  $("samples").hidden = false;
+
+  // Deep link for demos: /?demo=kubernetes pre-loads that sample (it never auto-analyzes)
+  const demo = new URLSearchParams(window.location.search).get("demo");
+  if (demo) {
+    const match = samples.find((s) => s.id === demo.toLowerCase());
+    if (match) applySample(match, { quiet: true });
+  }
+}
+
+/* ---------- Drag and drop a log file onto the editor ---------- */
+function initDropZone() {
+  const zone = document.querySelector(".terminal");
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+
+  // Without this, dropping a file outside the editor makes the browser open it
+  window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
+
+  zone.addEventListener("dragover", (e) => {
+    if (hasFiles(e)) {
+      e.preventDefault();
+      zone.classList.add("dragging");
+    }
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragging"));
+  zone.addEventListener("drop", async (e) => {
+    zone.classList.remove("dragging");
+    const file = e.dataTransfer && e.dataTransfer.files[0];
+    if (file && !busy) await loadFile(file);
+  });
+}
+
 /* ---------- Preview mode (?preview=...) for checking every UI state ---------- */
 const MOCK_RESULT = {
   id: 1,
@@ -520,6 +735,7 @@ const MOCK_RESULT = {
   created_at: new Date().toISOString(),
   ai_model: "openai/gpt-oss-120b",
   degraded: false,
+  redactions: 0,
   affected_component: "api pod (Kubernetes, namespace prod)",
   summary: "The api pod keeps crashing and Kubernetes is restarting it in a loop (CrashLoopBackOff).",
   root_cause: "The application crashes on startup because the DATABASE_URL environment variable is not set in the container. Python raises KeyError: 'DATABASE_URL' and exits with code 1.",
@@ -553,8 +769,12 @@ const MOCK_HISTORY = [
 ];
 
 function runPreview(mode) {
-  if (mode === "loading") return showPanel("panel-loading");
+  if (mode === "loading") {
+    showPanel("panel-loading");
+    return startLoadingTimer();
+  }
   if (mode === "error") return showError("The AI service took too long to respond. Please try again.");
+  if (mode === "redacted") return renderResult({ ...MOCK_RESULT, redactions: 3 });
   if (mode === "degraded") {
     return renderResult({
       ...MOCK_RESULT, degraded: true, severity: "MEDIUM", confidence: 0, ai_model: "fallback",
@@ -579,38 +799,6 @@ function runPreview(mode) {
     return;
   }
   if (mode === "result") return renderResult(MOCK_RESULT);
-}
-
-/* ---------- Sample logs (demo mode) ---------- */
-function loadSample(sample) {
-  if (busy) return;
-  const input = $("log-input");
-  const current = input.value.trim();
-  const isSample = (window.SAMPLE_LOGS || []).some((x) => x.log.trim() === current);
-  if (current && !isSample && !window.confirm("Replace the current log with this sample?")) return;
-
-  input.value = sample.log;
-  $("category").value = sample.category; // the AI reasons specifically about this category
-  updateCounter();
-  input.scrollTop = 0;
-  setMessage(`Loaded sample: ${sample.label}. Now click Analyze Failure.`, "info");
-  $("analyze-btn").focus();
-}
-
-function initSamples() {
-  const samples = window.SAMPLE_LOGS;
-  if (!Array.isArray(samples) || samples.length === 0) return;
-  const holder = $("sample-buttons");
-  for (const sample of samples) {
-    holder.append(el("button", {
-      type: "button",
-      className: "btn btn-chip",
-      text: sample.label,
-      title: `${sample.category} sample log`,
-      onclick: () => loadSample(sample),
-    }));
-  }
-  $("samples").hidden = false;
 }
 
 /* ---------- Init ---------- */
@@ -641,13 +829,17 @@ function init() {
     showPanel("panel-empty");
     input.focus();
   });
+  $("history-more").addEventListener("click", loadMoreHistory);
 
-  updateCounter();
   initSamples();
+  initDropZone();
+  updateCounter();
   showPanel("panel-empty");
 
+  checkApiStatus();
+  setInterval(checkApiStatus, 60000);
+
   const preview = new URLSearchParams(window.location.search).get("preview");
-  $("history-more").addEventListener("click", loadMoreHistory);
   if (preview) runPreview(preview);
   if (preview !== "history") loadHistory();
 }
