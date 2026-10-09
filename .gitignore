@@ -6,6 +6,8 @@
 *.key
 .aws/
 credentials
+y
+y.pub
 
 # Python
 __pycache__/
