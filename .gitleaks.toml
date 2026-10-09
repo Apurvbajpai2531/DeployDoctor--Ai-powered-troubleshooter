@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow synthetic private-key markers in redaction tests"
+paths = ['''backend/tests/test_redaction\.py''']
+regexTarget = "line"
+regexes = [
+  '''-----BEGIN (RSA )?PRIVATE KEY-----''',
+]
