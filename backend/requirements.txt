@@ -7,6 +7,6 @@ SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
 alembic==1.14.0
 groq==1.7.0
-slowapi==0.1.9
+slowapi==0.1.10
 python-multipart==0.0.20
 reportlab==5.0.1
