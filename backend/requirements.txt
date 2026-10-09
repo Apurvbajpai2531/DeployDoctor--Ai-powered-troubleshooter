@@ -9,3 +9,4 @@ alembic==1.14.0
 groq==1.7.0
 slowapi==0.1.9
 python-multipart==0.0.20
+reportlab==5.0.1

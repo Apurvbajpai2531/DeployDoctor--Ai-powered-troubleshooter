@@ -60,3 +60,9 @@ def test_sample_logs_are_complete_and_valid():
     assert len(ids) == len(set(ids)) == 7
     assert {"docker", "kubernetes", "aws", "terraform", "cicd", "postgres", "nginx"} == set(ids)
     assert set(categories) <= {c.value for c in FailureCategory}
+
+
+def test_pdf_download_and_dialog_are_wired():
+    assert "/pdf" in JS_CODE
+    assert 'id="confirm-dialog"' in HTML
+    assert 'id="toast-region"' in HTML

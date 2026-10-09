@@ -10,6 +10,7 @@ from app.schemas.analysis import (
     AnalyzeResponse,
 )
 from app.services import analysis_service
+from app.services.pdf_report import build_pdf, pdf_filename
 from app.utils.ratelimit import limiter
 from app.utils.session import get_session_id
 
@@ -98,3 +99,33 @@ def delete_analysis(
     if not analysis_service.delete_analysis(db, session_id, analysis_id):
         raise NOT_FOUND
     return Response(status_code=204)
+
+
+@router.get(
+    "/analyses/{analysis_id}/pdf",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "The diagnosis as a PDF file"},
+        404: {"description": "Analysis not found"},
+        429: {"description": "Rate limit exceeded"},
+    },
+    summary="Download an analysis as a PDF report",
+)
+@limiter.limit(get_settings().upload_rate_limit)
+def download_analysis_pdf(
+    request: Request,
+    analysis_id: int,
+    session_id: str = Depends(get_session_id),
+    db: Session = Depends(get_db),
+):
+    row = analysis_service.get_analysis(db, session_id, analysis_id)
+    if row is None:
+        raise NOT_FOUND
+    return Response(
+        content=build_pdf(row),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{pdf_filename(row)}"',
+            "Cache-Control": "no-store",
+        },
+    )

@@ -32,6 +32,7 @@ plus a severity, a confidence score, the affected component, and a short DevOps 
 - Choose a failure category (Docker, Kubernetes, CI/CD, Linux, AWS, Terraform, Application, Database, Networking, or Unknown); the prompt reasons specifically about it
 - Severity (LOW to CRITICAL), confidence, affected component, evidence, ordered fix steps, suggested commands, prevention advice, and a DevOps insight
 - Copy the whole diagnosis as Markdown for a ticket or postmortem
+- Download the diagnosis as a PDF report (generated on the server)
 - Seven built-in sample logs for a quick demo
 
 **Reliability of the AI output**
@@ -191,6 +192,7 @@ Analysis endpoints need an `X-Session-ID` header (16 to 64 letters, digits, or h
 | GET | `/api/analyses` | List this session's analyses (`limit`, `offset`) |
 | GET | `/api/analyses/{id}` | One full analysis |
 | DELETE | `/api/analyses/{id}` | Delete an analysis (204) |
+| GET | `/api/analyses/{id}/pdf` | Download an analysis as a PDF report |
 | POST | `/api/upload-log` | Validate a log file and return its text |
 
 ```bash

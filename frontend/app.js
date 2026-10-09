@@ -61,6 +61,7 @@ const ICON_PATHS = {
   copy: "M8 8h11v12H8z M5 16H4V4h11v1",
   check: "M5 12l5 5 9-10",
   trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6",
+  download: "M12 4v12 M7 11l5 5 5-5 M4 20h16",
 };
 
 function icon(name) {
@@ -134,6 +135,95 @@ function copyButton(getText, label = "Copy", className = "btn btn-secondary btn-
     btn.replaceChildren(icon(ok ? "check" : "copy"), ok ? "Copied" : "Copy failed");
     setTimeout(() => btn.replaceChildren(icon("copy"), label), 1600);
   });
+  return btn;
+}
+
+/* ---------- Toasts and confirm dialog ---------- */
+function toast(message, kind = "info") {
+  const node = el("div", {
+    className: `toast toast-${kind}`,
+    role: kind === "error" ? "alert" : "status",
+    text: message,
+  });
+  $("toast-region").append(node);
+  setTimeout(() => node.remove(), kind === "error" ? 6000 : 3000);
+}
+
+function confirmDialog({ title, message, confirmLabel = "Confirm" }) {
+  const dialog = $("confirm-dialog");
+  if (typeof dialog.showModal !== "function") return Promise.resolve(window.confirm(message));
+
+  $("confirm-title").textContent = title;
+  $("confirm-message").textContent = message;
+  $("confirm-ok").textContent = confirmLabel;
+
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      $("confirm-ok").removeEventListener("click", onOk);
+      $("confirm-cancel").removeEventListener("click", onCancel);
+      dialog.removeEventListener("close", onClose);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onClose = () => finish(false); // Escape key
+    $("confirm-ok").addEventListener("click", onOk);
+    $("confirm-cancel").addEventListener("click", onCancel);
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    $("confirm-cancel").focus();
+  });
+}
+
+/* ---------- PDF report ---------- */
+async function downloadPdf(a, btn) {
+  if (a.preview) return toast("PDF download is not available for preview data.", "error");
+
+  btn.disabled = true;
+  btn.replaceChildren(icon("download"), "Preparing PDF…");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/analyses/${a.id}/pdf`, {
+      headers: { "X-Session-ID": getSessionId() },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      let body = null;
+      try {
+        body = await res.json();
+      } catch (_) {
+        /* not JSON: use the generic message */
+      }
+      throw new ApiError(errorMessageFrom(res.status, body), res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = el("a", { href: url, download: `deploydoctor-diagnosis-${a.id}.pdf` });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast("PDF downloaded");
+  } catch (err) {
+    let message = "Cannot reach the server. Check your connection and try again.";
+    if (err instanceof ApiError) message = err.message;
+    else if (err.name === "AbortError") message = "The request timed out. Please try again.";
+    toast(`Could not create the PDF. ${message}`, "error");
+  } finally {
+    clearTimeout(timer);
+    btn.disabled = false;
+    btn.replaceChildren(icon("download"), "Download PDF");
+  }
+}
+
+function pdfButton(a) {
+  const btn = el("button", { type: "button", className: "btn btn-secondary btn-small" }, [
+    icon("download"),
+    "Download PDF",
+  ]);
+  btn.addEventListener("click", () => downloadPdf(a, btn));
   return btn;
 }
 
@@ -281,6 +371,7 @@ function renderResult(a) {
       a.ai_model ? metaItem("Model", a.ai_model) : null,
     ]),
     el("div", { className: "vitals-actions" }, [
+      pdfButton(a),
       copyButton(() => toMarkdown(a), "Copy report"),
     ]),
   ]);
@@ -626,7 +717,7 @@ async function loadMoreHistory() {
     historyTotal = data.total;
     showHistory();
   } catch (err) {
-    window.alert(`Could not load more: ${err.message}`);
+    toast(`Could not load more: ${err.message}`, "error");
   } finally {
     btn.disabled = false;
   }
@@ -652,12 +743,17 @@ async function openAnalysis(id) {
 
 async function deleteAnalysisItem(id) {
   if (busy) return;
-  if (!window.confirm("Delete this analysis? This cannot be undone.")) return;
+  const confirmed = await confirmDialog({
+    title: "Delete this analysis?",
+    message: "It will be removed from your history. This cannot be undone.",
+    confirmLabel: "Delete",
+  });
+  if (!confirmed) return;
   try {
     await apiFetch(`/api/analyses/${id}`, { method: "DELETE" }, UPLOAD_TIMEOUT_MS);
   } catch (err) {
     if (err.status !== 404) { // 404 means it is already gone, which is the outcome we wanted
-      window.alert(`Could not delete: ${err.message}`);
+      toast(`Could not delete: ${err.message}`, "error");
       return;
     }
   }
@@ -666,6 +762,7 @@ async function deleteAnalysisItem(id) {
     showPanel("panel-empty");
   }
   await refreshHistory();
+  toast("Analysis deleted");
 }
 
 /* ---------- Sample logs (demo mode) ---------- */
@@ -735,6 +832,7 @@ const MOCK_RESULT = {
   created_at: new Date().toISOString(),
   ai_model: "openai/gpt-oss-120b",
   degraded: false,
+  preview: true,
   redactions: 0,
   affected_component: "api pod (Kubernetes, namespace prod)",
   summary: "The api pod keeps crashing and Kubernetes is restarting it in a loop (CrashLoopBackOff).",
