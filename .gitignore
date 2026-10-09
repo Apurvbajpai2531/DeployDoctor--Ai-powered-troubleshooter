@@ -45,3 +45,9 @@ Thumbs.db
 # SSH keys
 y
 y.pub
+/y
+/y.pub
+
+# SSH keys
+/y
+/y.pub
