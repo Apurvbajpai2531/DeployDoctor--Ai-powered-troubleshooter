@@ -2,9 +2,9 @@
 useDefault = true
 
 [[allowlists]]
-description = "Allow synthetic private-key markers in redaction tests"
+description = "Allow synthetic redaction-test fixture in test history"
 paths = ['''backend/tests/test_redaction\.py''']
 regexTarget = "line"
 regexes = [
-  '''-----BEGIN (RSA )?PRIVATE KEY-----''',
+  '''REDACTED-.*1800''',
 ]
