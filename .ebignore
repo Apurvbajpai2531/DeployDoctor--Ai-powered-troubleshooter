@@ -21,3 +21,11 @@ backend/tests
 .elasticbeanstalk
 .vscode
 .idea
+venv*
+*.deb
+cloudflared*
+.ssh
+id_rsa*
+id_ed25519*
+.gitleaks.toml
+.gitleaksignore

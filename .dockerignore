@@ -16,3 +16,9 @@ htmlcov
 docs
 README.md
 backend/tests
+venv*
+*.deb
+cloudflared*
+.ssh
+id_rsa*
+id_ed25519*

@@ -51,3 +51,23 @@ y.pub
 # SSH keys
 /y
 /y.pub
+
+# Virtual environments (any name)
+venv*/
+env/
+
+# SSH and key material
+.ssh/
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+*.p12
+*.pfx
+known_hosts
+authorized_keys
+
+# Installers and binaries
+*.deb
+*.rpm
+cloudflared*
