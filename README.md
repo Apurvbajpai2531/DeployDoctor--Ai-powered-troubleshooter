@@ -315,9 +315,11 @@ Afterwards check for leftovers (RDS instances and snapshots, CloudWatch log grou
 
 ## Screenshots
 
-- TODO: dashboard (`docs/screenshots/dashboard.png`)
-- TODO: diagnosis with vitals and timeline (`docs/screenshots/diagnosis.png`)
-- TODO: history panel (`docs/screenshots/history.png`)
+### Dashboard
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Diagnosis with vitals and timeline
+![Diagnosis](docs/screenshots/diagnosis.png)
 
 ## Hackathon notes
 
