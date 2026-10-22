@@ -25,6 +25,17 @@ the matching "recommended_fix" step.
 6. Be specific to the log: mention actual resource names, ports, error codes, and \
 versions that appear in it.
 7. Write for a developer without deep DevOps experience: plain language, short sentences.
+8. Find the ROOT cause, not the loudest symptom. Trace cause to effect across the whole \
+log. Errors such as OOMKilled, CrashLoopBackOff, timeouts, readiness probe failures, \
+connection pool exhaustion and failed rollouts are often downstream symptoms. Look for \
+one underlying cause that explains several unrelated-looking errors, for example clock \
+skew, DNS, network, certificates, or credentials. If errors from different services \
+involve time, signatures, tokens, or certificates (for example RequestTimeTooSkewed, a \
+JWT that is not yet valid, a TLS certificate that is not yet valid), check clock skew \
+and NTP first (look for chronyd, ntpd, or timesyncd lines). Do not pick the most \
+dramatic error and do not simply pick the first error in the log. Pick the cause that \
+explains the most other errors, and name those other errors in "root_cause". Mention \
+separately any real but unrelated problem, and say it is secondary.
 
 SEVERITY
 - LOW: warning or cosmetic issue, service works.
@@ -43,7 +54,7 @@ Use exactly these keys:
 {
   "summary": "one or two sentences describing the failure (the symptom)",
   "severity": "LOW | MEDIUM | HIGH | CRITICAL",
-  "root_cause": "the most probable underlying cause, explained simply",
+  "root_cause": "the most probable underlying cause, explained simply, including which other errors it explains",
   "affected_component": "the specific component, e.g. 'api pod (Kubernetes)'",
   "evidence": ["exact lines copied from the log that support the root cause"],
   "recommended_fix": ["ordered, actionable steps"],
@@ -76,13 +87,15 @@ CATEGORY_GUIDANCE: dict[FailureCategory, str] = {
     FailureCategory.LINUX: (
         "Think about: systemd unit failures, permission and ownership problems, disk or "
         "inode exhaustion, memory pressure and the OOM killer, port already in use, missing "
-        "packages or libraries, SELinux/AppArmor denials, and file descriptor limits."
+        "packages or libraries, SELinux/AppArmor denials, file descriptor limits, and "
+        "system clock drift or NTP sync failures."
     ),
     FailureCategory.AWS: (
         "Think about: IAM permission denials (identify the exact action and resource in "
         "the AccessDenied message), missing or wrong IAM role/instance profile, security "
-        "group and subnet issues, service quotas, region mismatches, Elastic Beanstalk "
-        "health and deployment errors, and RDS or S3 access problems."
+        "group and subnet issues, service quotas, region mismatches, clock skew "
+        "(RequestTimeTooSkewed), Elastic Beanstalk health and deployment errors, and RDS "
+        "or S3 access problems."
     ),
     FailureCategory.TERRAFORM: (
         "Think about: state lock errors, provider authentication, invalid or deprecated "
@@ -102,12 +115,14 @@ CATEGORY_GUIDANCE: dict[FailureCategory, str] = {
     FailureCategory.NETWORKING: (
         "Think about: DNS resolution failures, connection refused versus timed out, "
         "security groups and firewalls, wrong ports, proxy and TLS certificate problems "
-        "(expiry, hostname mismatch), 502/503/504 gateway errors, and upstream health."
+        "(expiry, not yet valid, hostname mismatch), 502/503/504 gateway errors, and "
+        "upstream health."
     ),
     FailureCategory.UNKNOWN: (
         "The failure type is not known. First identify which technology the log comes "
         "from (for example Docker, Kubernetes, a CI system, a database, or a web server) "
-        "and say so, then diagnose within that domain."
+        "and say so, then diagnose within that domain. If the log mixes several services, "
+        "look for one shared cause across them before blaming a single service."
     ),
 }
 
