@@ -8,7 +8,7 @@ An AI-powered DevOps troubleshooting tool. Paste a failing deployment or applica
 
 Built for the **Build on Elastic Beanstalk** hackathon (theme: *How DevOps Evolves India*).
 
-- **Live demo:** TODO (add the Elastic Beanstalk URL after deploying)
+- **Live demo:** (https://deploydoctor-ai-powered-troubl.deploydoctor-ai.blitz.cloud/)
 - **Deployment status:** TODO (the Elastic Beanstalk configuration is in this repo; update this line once the environment is live)
 
 ## Problem
